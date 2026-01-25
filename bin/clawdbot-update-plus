@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# Clawdbot Update Plus v2.0.0
+# Full backup, update, and restore for Clawdbot
+# Author: hopyky
+# License: MIT
+
+set -euo pipefail
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source all modules
+source "${SCRIPT_DIR}/lib/utils.sh"
+source "${SCRIPT_DIR}/lib/config.sh"
+source "${SCRIPT_DIR}/lib/backup.sh"
+source "${SCRIPT_DIR}/lib/restore.sh"
+source "${SCRIPT_DIR}/lib/update.sh"
+source "${SCRIPT_DIR}/lib/notify.sh"
+source "${SCRIPT_DIR}/lib/cron.sh"
+
+# Global options
+DRY_RUN=false
+FORCE_UPDATE=false
+CHECK_DISK=true
+NOTIFICATION_ENABLED=false
+NO_BACKUP_CLI=false
+
+# Show version
+show_version() {
+  echo "Clawdbot Update Plus v2.0.0"
+}
+
+# Show help
+show_help() {
+  cat <<'EOF'
+Clawdbot Update Plus v2.0.0
+Full backup, update, and restore for Clawdbot.
+
+USAGE
+  clawdbot update-plus <command> [options]
+
+COMMANDS
+  backup                       Create a backup of configured paths
+  list-backups                 List available backups
+  update                       Update Clawdbot and all skills (with backup)
+  restore <id> [label]         Restore from backup (optionally specific label)
+  diff-backups <a> <b>         Compare two backups
+  check                        Check for available updates
+  install-cron [schedule]      Install automatic update cron job
+  uninstall-cron               Remove the cron job
+
+OPTIONS
+  --dry-run               Preview changes without modifying anything
+  --no-backup             Skip backup before update
+  --no-check-disk         Skip disk space check
+  --force                 Continue even if backup fails
+  --notify                Force send notification
+  -h, --help              Show this help
+  -v, --version           Show version
+
+BACKUP PATHS
+  Configure what to backup in ~/.clawdbot/clawdbot-update.json:
+    "backup_paths": [
+      {"path": "~/.clawdbot", "label": "config", "exclude": ["backups", "logs"]},
+      {"path": "~/clawd", "label": "workspace", "exclude": ["node_modules"]}
+    ]
+
+SKILLS UPDATE
+  Configure which skills directories to update:
+    "skills_dirs": [
+      {"path": "~/.clawdbot/skills", "label": "prod", "update": true},
+      {"path": "~/clawd/skills", "label": "dev", "update": false}
+    ]
+
+NOTIFICATIONS
+  Configure notifications:
+    "notifications": {
+      "enabled": true,
+      "target": "+1234567890",
+      "on_success": true,
+      "on_error": true
+    }
+
+EXAMPLES
+  clawdbot update-plus backup
+  clawdbot update-plus update --dry-run
+  clawdbot update-plus restore backup.tar.gz
+  clawdbot update-plus restore backup.tar.gz config
+  clawdbot update-plus check
+
+For full documentation: https://github.com/hopyky/clawdbot-update-plus
+EOF
+}
+
+# Main command dispatcher
+main() {
+  local positional_args=()
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
+      --no-backup)
+        NO_BACKUP_CLI=true
+        shift
+        ;;
+      --no-check-disk)
+        CHECK_DISK=false
+        shift
+        ;;
+      --force)
+        FORCE_UPDATE=true
+        shift
+        ;;
+      --notify)
+        NOTIFICATION_ENABLED=true
+        shift
+        ;;
+      -h|--help)
+        show_help
+        exit 0
+        ;;
+      -v|--version)
+        show_version
+        exit 0
+        ;;
+      -*)
+        log_error "Unknown option: $1"
+        show_help
+        exit 1
+        ;;
+      *)
+        positional_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # Get command
+  local command="${positional_args[0]:-check}"
+
+  # Load configuration
+  load_config
+  validate_config || exit 1
+
+  # Apply CLI overrides (after config load)
+  if [[ "$NO_BACKUP_CLI" == true ]]; then
+    BACKUP_BEFORE_UPDATE="false"
+  fi
+
+  # Detect workspace
+  detect_workspace
+
+  # Dispatch command
+  case "$command" in
+    backup)
+      create_backup || exit 1
+      ;;
+
+    list-backups)
+      list_backups || exit 1
+      ;;
+
+    update)
+      cmd_update
+      ;;
+
+    restore)
+      restore_backup "${positional_args[@]:1}" || exit 1
+      ;;
+
+    diff-backups)
+      diff_backups "${positional_args[@]:1}" || exit 1
+      ;;
+
+    check)
+      check_updates
+      ;;
+
+    install-cron)
+      install_cron "${positional_args[1]:-}"
+      ;;
+
+    uninstall-cron)
+      uninstall_cron
+      ;;
+
+    *)
+      log_error "Unknown command: $command"
+      show_help
+      exit 1
+      ;;
+  esac
+}
+
+# Update command with full workflow
+cmd_update() {
+  if [[ "$DRY_RUN" == true ]]; then
+    echo ""
+    log_warning "DRY-RUN MODE - No changes will be made"
+    echo ""
+  fi
+
+  log_info "Starting update process..."
+  log_to_file "=== Update started $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+  # Check disk space
+  if ! check_disk_space; then
+    send_notification "error" "Insufficient disk space"
+    exit 1
+  fi
+
+  # Check internet connection
+  if ! check_connection; then
+    send_notification "error" "No internet connection"
+    exit 1
+  fi
+
+  # Create backup if enabled
+  local backup_name=""
+  if [[ "$BACKUP_BEFORE_UPDATE" == "true" ]]; then
+    if ! backup_name=$(create_backup); then
+      if [[ "$FORCE_UPDATE" == true ]]; then
+        log_warning "Backup failed, but --force is enabled. Continuing..."
+      else
+        log_error "Backup failed. Use --force to continue without backup."
+        send_notification "error" "Backup creation failed"
+        exit 1
+      fi
+    fi
+  fi
+
+  # Update Clawdbot
+  if ! update_clawdbot; then
+    log_error "Clawdbot update failed"
+    send_notification "error" "Clawdbot update failed"
+    exit 1
+  fi
+
+  # Update skills
+  update_skills
+
+  # Success
+  echo ""
+  log_success "Update completed!"
+  log_to_file "=== Update completed $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+  if [[ -n "$backup_name" ]]; then
+    log_info "Backup: $backup_name"
+  fi
+
+  # Send notification
+  send_notification "success" "Backup: ${backup_name:-none}"
+
+  # Clean logs
+  clean_logs
+}
+
+# Run main
+main "$@"
