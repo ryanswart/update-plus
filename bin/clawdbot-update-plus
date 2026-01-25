@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# Clawdbot Update Plus v2.0.1
+# Clawdbot Update Plus v2.0.2
 # Full backup, update, and restore for Clawdbot
 # Author: hopyky
 # License: MIT
 
 set -euo pipefail
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Script directory (resolve symlinks)
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 # Source all modules
 source "${SCRIPT_DIR}/lib/utils.sh"
@@ -27,13 +33,13 @@ NO_BACKUP_CLI=false
 
 # Show version
 show_version() {
-  echo "Clawdbot Update Plus v2.0.1"
+  echo "Clawdbot Update Plus v2.0.2"
 }
 
 # Show help
 show_help() {
   cat <<'EOF'
-Clawdbot Update Plus v2.0.1
+Clawdbot Update Plus v2.0.2
 Full backup, update, and restore for Clawdbot.
 
 USAGE

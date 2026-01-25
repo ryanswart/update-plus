@@ -6,19 +6,19 @@ A comprehensive backup, update, and restore tool for your entire Clawdbot enviro
 
 ```bash
 # Check for available updates
-clawdbot update-plus check
+clawdbot-update-plus check
 
 # Create a full backup
-clawdbot update-plus backup
+clawdbot-update-plus backup
 
 # Update everything (creates backup first)
-clawdbot update-plus update
+clawdbot-update-plus update
 
 # Preview changes (no modifications)
-clawdbot update-plus update --dry-run
+clawdbot-update-plus update --dry-run
 
 # Restore from backup
-clawdbot update-plus restore clawdbot-update-2026-01-25-12:00:00.tar.gz
+clawdbot-update-plus restore clawdbot-update-2026-01-25-12:00:00.tar.gz
 ```
 
 ## Features
@@ -38,11 +38,22 @@ clawdbot update-plus restore clawdbot-update-2026-01-25-12:00:00.tar.gz
 ## Installation
 
 ```bash
-# Via ClawdHub (recommended)
-clawdhub install clawdbot-update-plus
+# Via ClawdHub
+clawdhub install clawdbot-update-plus --dir ~/.clawdbot/skills
 
 # Or clone manually
 git clone https://github.com/hopyky/clawdbot-update-plus.git ~/.clawdbot/skills/clawdbot-update-plus
+```
+
+### Add to PATH
+
+Create a symlink to use the command globally:
+
+```bash
+mkdir -p ~/bin
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc  # or ~/.bashrc
+source ~/.zshrc
+ln -sf ~/.clawdbot/skills/clawdbot-update-plus/bin/clawdbot-update-plus ~/bin/clawdbot-update-plus
 ```
 
 ### Dependencies
@@ -136,64 +147,64 @@ Configure which skills to update with `skills_dirs`:
 ### `backup` — Create Full Backup
 
 ```bash
-clawdbot update-plus backup
+clawdbot-update-plus backup
 ```
 
 ### `list-backups` — List Available Backups
 
 ```bash
-clawdbot update-plus list-backups
+clawdbot-update-plus list-backups
 ```
 
 ### `update` — Update Everything
 
 ```bash
 # Standard update (with automatic backup)
-clawdbot update-plus update
+clawdbot-update-plus update
 
 # Preview changes only
-clawdbot update-plus update --dry-run
+clawdbot-update-plus update --dry-run
 
 # Skip backup
-clawdbot update-plus update --no-backup
+clawdbot-update-plus update --no-backup
 
 # Force continue even if backup fails
-clawdbot update-plus update --force
+clawdbot-update-plus update --force
 ```
 
 ### `restore` — Restore from Backup
 
 ```bash
 # Restore everything
-clawdbot update-plus restore backup.tar.gz
+clawdbot-update-plus restore backup.tar.gz
 
 # Restore only config
-clawdbot update-plus restore backup.tar.gz config
+clawdbot-update-plus restore backup.tar.gz config
 
 # Restore only workspace
-clawdbot update-plus restore backup.tar.gz workspace
+clawdbot-update-plus restore backup.tar.gz workspace
 
 # Force (no confirmation)
-clawdbot update-plus restore backup.tar.gz --force
+clawdbot-update-plus restore backup.tar.gz --force
 ```
 
 ### `check` — Check for Updates
 
 ```bash
-clawdbot update-plus check
+clawdbot-update-plus check
 ```
 
 ### `install-cron` — Automatic Updates
 
 ```bash
 # Install daily at 2 AM
-clawdbot update-plus install-cron
+clawdbot-update-plus install-cron
 
 # Custom schedule
-clawdbot update-plus install-cron "0 3 * * 0"  # Sundays at 3 AM
+clawdbot-update-plus install-cron "0 3 * * 0"  # Sundays at 3 AM
 
 # Remove
-clawdbot update-plus uninstall-cron
+clawdbot-update-plus uninstall-cron
 ```
 
 ## Notifications
