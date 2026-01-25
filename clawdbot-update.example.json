@@ -1,0 +1,19 @@
+{
+  "workspace": "${HOME}/clawd",
+  "skills_dir": "${HOME}/.clawdbot/skills",
+  "backup_dir": "${HOME}/.clawdbot/backups",
+  "auto_update": false,
+  "backup_before_update": true,
+  "backup_count": 5,
+  "update_interval_hours": 24,
+  "excluded_skills": [],
+  "remote_storage": {
+    "enabled": false,
+    "rclone_remote": "my-remote:",
+    "path": "clawdbot-backups"
+  },
+  "encryption": {
+    "enabled": false,
+    "gpg_recipient": "your-gpg-key-id-or-email"
+  }
+}
