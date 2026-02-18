@@ -176,7 +176,12 @@ main() {
       ;;
 
     restore)
-      restore_backup "${positional_args[@]:1}" || exit 1
+      # Pass FORCE_UPDATE as --force to restore function
+      if [[ "$FORCE_UPDATE" == "true" ]]; then
+        restore_backup "${positional_args[1]:-}" "" "--force" || exit 1
+      else
+        restore_backup "${positional_args[@]:1}" || exit 1
+      fi
       ;;
 
     diff-backups)
