@@ -190,7 +190,7 @@ restore_labeled_backup() {
       continue
     fi
 
-    local target="${restore_map[$label]}"
+    local target="${restore_map[$label]:-}"
     if [[ -z "$target" ]] || [[ "$target" == "unknown" ]]; then
       log_warning "Unknown label '$label', skipping"
       continue
