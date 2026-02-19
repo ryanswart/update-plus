@@ -398,7 +398,7 @@ sanitize_backup_paths() {
   local remaining=0
   for path in "${unique_paths[@]}"; do
     local count
-    count=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | wc -l || echo "0")
+    count=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | wc -l | tr -d ' ' || echo "0")
     remaining=$((remaining + count))
   done
   
