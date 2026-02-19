@@ -204,6 +204,24 @@ restore_labeled_backup() {
     # Restore with rsync
     if rsync -a --delete "$tmp_dir/$label/" "$target/" 2>/dev/null; then
       log_success "Restored $label"
+      
+      # Fix hardcoded paths in JSON files (e.g., /root/.openclaw -> /home/runner)
+      if command -v find >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
+        local original_home=""
+        # Try to detect original home from common patterns in the backup
+        if grep -rI "/root/\." "$target/" 2>/dev/null | head -1 >/dev/null; then
+          original_home="/root"
+        elif grep -rI "/home/[^/]*/\." "$target/" 2>/dev/null | head -1 >/dev/null; then
+          original_home=$(grep -rI "/home/[^/]*/" "$target/" 2>/dev/null | head -1 | sed 's|.*/home/\([^/]*\)/.*|/home/\1|')
+        fi
+        
+        if [[ -n "$original_home" ]] && [[ "$original_home" != "$HOME" ]]; then
+          log_info "Fixing hardcoded paths: $original_home → $HOME"
+          find "$target" -type f -name "*.json" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          find "$target" -type f -name "*.jsonl" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+        fi
+      fi
+      
       restored_count=$((restored_count + 1))
     else
       log_error "Failed to restore $label"
