@@ -50,6 +50,9 @@ restore_backup() {
     return 1
   fi
 
+  # Sanitize paths in extracted backup BEFORE processing
+  sanitize_backup_paths "$tmp_extract_dir"
+
   # Detect backup structure
   local labels_found=()
   for dir in "$tmp_extract_dir"/*/; do
@@ -211,31 +214,86 @@ restore_labeled_backup() {
       if command -v find >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
         local original_home=""
         # Try to detect original home from common patterns in the backup
-        if grep -rI "/root/\." "$target/" 2>/dev/null | head -1 >/dev/null; then
+        # Check for /root first (common in Docker containers)
+        if grep -rI "/root/" "$target/" 2>/dev/null | grep -v ".git/" | head -1 >/dev/null; then
           original_home="/root"
-        elif grep -rI "/home/[^/]*/\." "$target/" 2>/dev/null | head -1 >/dev/null; then
-          original_home=$(grep -rI "/home/[^/]*/" "$target/" 2>/dev/null | head -1 | sed 's|.*/home/\([^/]*\)/.*|/home/\1|')
+          log_info "Detected original home: /root"
+        fi
+        
+        # Check for any /home/*/ paths (various usernames)
+        local detected_home
+        detected_home=$(grep -rohI "/home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        if [[ -n "$detected_home" ]]; then
+          original_home="$detected_home"
+          log_info "Detected original home from backup: $original_home"
+        fi
+        
+        # Also check for home references without leading slash (e.g., home/exedev/)
+        local detected_home_rel
+        detected_home_rel=$(grep -rohI "home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        if [[ -n "$detected_home_rel" ]]; then
+          # Only use if we didn't already find an absolute path
+          if [[ -z "$original_home" ]]; then
+            original_home="/$detected_home_rel"
+            log_info "Detected relative home path from backup: $original_home"
+          fi
         fi
         
         if [[ -n "$original_home" ]] && [[ "$original_home" != "$HOME" ]]; then
           log_info "Fixing hardcoded paths: $original_home → $HOME"
-          # Fix JSON files
-          find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          
+          # Create a temp file for tracking what was changed
+          local changes_made=0
+          
+          # Fix JSON files (most common for OpenClaw config)
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            fi
+          done < <(find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -print0 2>/dev/null)
+          
           # Fix YAML files
-          find "$target" -type f \( -name "*.yaml" -o -name "*.yml" \) -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
-          # Fix shell scripts that might contain paths
-          find "$target" -type f -name "*.sh" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
-          # Fix any other text files (be more careful here)
-          find "$target" -type f ! -name "*.tar.gz" ! -name "*.gpg" ! -name "*.png" ! -name "*.jpg" ! -name "*.gif" ! -name "*.ico" ! -name "*.woff" ! -name "*.woff2" ! -name "*.ttf" ! -name "*.eot" -exec grep -l "$original_home" {} \; 2>/dev/null | while read -r file; do
-            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null || true
-          done
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            fi
+          done < <(find "$target" -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 2>/dev/null)
+          
+          # Fix shell scripts
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            fi
+          done < <(find "$target" -type f -name "*.sh" -print0 2>/dev/null)
+          
+          # Fix all other text files (more aggressive approach)
+          while IFS= read -r -d '' file; do
+            # Skip binary files and archives
+            case "$file" in
+              *.tar.gz|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.ttf|*.eot|*.mp3|*.mp4|*.zip)
+                continue
+                ;;
+            esac
+            # Check if file contains the original home path
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              # Check if it's a text file before modifying
+              if file "$file" 2>/dev/null | grep -q "text\|JSON\|YAML"; then
+                sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+              fi
+            fi
+          done < <(find "$target" -type f -print0 2>/dev/null)
+          
+          log_info "Path replacement complete. Modified $changes_made files."
           
           # Validate: check if any hardcoded paths remain
-          local remaining_paths
-          remaining_paths=$(grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | head -5 || true)
-          if [[ -n "$remaining_paths" ]]; then
-            log_warning "Some hardcoded paths may remain in the restored files:"
-            echo "$remaining_paths" | head -3 >&2
+          local remaining_count
+          remaining_count=$(grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | wc -l || echo "0")
+          if [[ "$remaining_count" -gt 0 ]]; then
+            log_warning "$remaining_count occurrences of $original_home may still remain in restored files"
+            # Show sample of remaining paths (first 3)
+            grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | head -3 >&2 || true
+          else
+            log_success "All hardcoded paths successfully replaced"
           fi
         fi
       fi
@@ -252,6 +310,103 @@ restore_labeled_backup() {
   fi
 
   return 0
+}
+
+# Sanitize hardcoded paths in extracted backup BEFORE restore
+# This runs on the temp directory before any files are moved to their final locations
+sanitize_backup_paths() {
+  local tmp_dir="$1"
+  
+  log_info "Sanitizing backup paths..."
+  
+  # Detect common home directory patterns in the backup
+  local original_home=""
+  local detected_paths=()
+  
+  # Check for /root (common in Docker containers)
+  if grep -rI "/root/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | head -1 >/dev/null; then
+    detected_paths+=("/root")
+  fi
+  
+  # Check for /home/* patterns - get all unique home directories
+  local home_paths
+  home_paths=$(grep -rohI "/home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | sed 's|/$||' | sort -u || true)
+  if [[ -n "$home_paths" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && detected_paths+=("$path")
+    done <<< "$home_paths"
+  fi
+  
+  # Also check for patterns like "home/username" without leading slash
+  local rel_paths
+  rel_paths=$(grep -rohI "home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | sed 's|/$||' | sort -u || true)
+  if [[ -n "$rel_paths" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && detected_paths+=("/$path")
+    done <<< "$rel_paths"
+  fi
+  
+  # Remove duplicates and current HOME from the list
+  local unique_paths=()
+  for path in "${detected_paths[@]}"; do
+    # Skip if it's the current HOME
+    [[ "$path" == "$HOME" ]] && continue
+    # Skip if already in unique_paths
+    local found=0
+    for existing in "${unique_paths[@]}"; do
+      [[ "$existing" == "$path" ]] && { found=1; break; }
+    done
+    [[ $found -eq 0 ]] && unique_paths+=("$path")
+  done
+  
+  if [[ ${#unique_paths[@]} -eq 0 ]]; then
+    log_info "No hardcoded home paths detected in backup"
+    return 0
+  fi
+  
+  log_info "Detected ${#unique_paths[@]} hardcoded home path(s) to sanitize: ${unique_paths[*]}"
+  
+  # Replace all detected paths with current HOME
+  local total_changes=0
+  for original_home in "${unique_paths[@]}"; do
+    log_info "Replacing: $original_home → $HOME"
+    
+    # Use find with -print0 for safety with special characters
+    while IFS= read -r -d '' file; do
+      # Skip binary files by checking mime type or extension
+      case "$file" in
+        *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
+          continue
+          ;;
+      esac
+      
+      # Check if file is text and contains the path
+      if grep -q "$original_home" "$file" 2>/dev/null; then
+        # Verify it's a text file
+        if file "$file" 2>/dev/null | grep -qiE "text|ascii|json|yaml|xml|script|source"; then
+          if sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null; then
+            total_changes=$((total_changes + 1))
+          fi
+        fi
+      fi
+    done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
+  done
+  
+  log_info "Sanitized $total_changes files"
+  
+  # Final validation - check if any hardcoded paths remain
+  local remaining=0
+  for path in "${unique_paths[@]}"; do
+    local count
+    count=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | wc -l || echo "0")
+    remaining=$((remaining + count))
+  done
+  
+  if [[ $remaining -gt 0 ]]; then
+    log_warning "$remaining hardcoded path references may still remain"
+  else
+    log_success "Backup paths sanitized successfully"
+  fi
 }
 
 # Cleanup restore temp files
