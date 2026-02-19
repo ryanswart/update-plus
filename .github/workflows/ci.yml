@@ -45,8 +45,8 @@ jobs:
               tar -czf "$BACKUP_DIR/test-labeled.tar.gz" -C "$TMP_DIR" config skills workspace
               rm -rf "$TMP_DIR"
               
-              # Test restore
-              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; set -euo pipefail; restore_backup "test-labeled.tar.gz" "" "--force"'
+              # Test restore - call load_config to initialize variables
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-labeled.tar.gz" "" "--force"'
               
               # Verify
               [ -f "$HOME/.openclaw/test.json" ] || { echo "Config not restored"; exit 1; }
@@ -63,8 +63,8 @@ jobs:
               tar -czf "$BACKUP_DIR/test-legacy.tar.gz" -C "$TMP_DIR" .
               rm -rf "$TMP_DIR"
               
-              # Test restore
-              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; set -euo pipefail; restore_backup "test-legacy.tar.gz" "" "--force"'
+              # Test restore - call load_config to initialize variables
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-legacy.tar.gz" "" "--force"'
               
               echo "✅ Legacy backup test passed"
               ;;
@@ -78,8 +78,8 @@ jobs:
               tar -czf "$BACKUP_DIR/test-force.tar.gz" -C "$TMP_DIR" config
               rm -rf "$TMP_DIR"
               
-              # Test restore with --force - should NOT prompt
-              timeout 5 bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; set -euo pipefail; restore_backup "test-force.tar.gz" "" "--force"' || { echo "Restore with --force failed or timed out"; exit 1; }
+              # Test restore with --force - should NOT prompt - call load_config
+              timeout 5 bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-force.tar.gz" "" "--force"' || { echo "Restore with --force failed or timed out"; exit 1; }
               
               echo "✅ Force flag test passed"
               ;;
@@ -93,8 +93,8 @@ jobs:
               tar -czf "$BACKUP_DIR/test-paths.tar.gz" -C "$TMP_DIR" config
               rm -rf "$TMP_DIR"
               
-              # Test restore
-              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; set -euo pipefail; restore_backup "test-paths.tar.gz" "" "--force"'
+              # Test restore - call load_config
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-paths.tar.gz" "" "--force"'
               
               # Verify path was replaced
               if grep -q "$HOME/.openclaw/test" "$HOME/.openclaw/paths.json"; then
@@ -128,8 +128,8 @@ jobs:
           echo '{"test": true}' > ~/.openclaw/config/test.json
           echo 'workspace content' > ~/.openclaw/workspace/README.md
           
-          # Test backup
-          bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/backup.sh; set -euo pipefail; create_backup'
+          # Test backup - call load_config to initialize variables
+          bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/backup.sh; load_config; set -euo pipefail; create_backup'
           
           # Verify backup exists
           ls -la ~/.openclaw/backups/*.tar.gz || { echo "Backup not created"; exit 1; }
@@ -158,8 +158,8 @@ jobs:
           tar -czf "$HOME/.openclaw/backups/test-unbound.tar.gz" -C "$TMP_DIR" config skills extensions
           rm -rf "$TMP_DIR"
           
-          # This should NOT fail with "unbound variable" error
-          bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; set -euo pipefail; restore_backup "test-unbound.tar.gz" "" "--force"' || { echo "Unbound variable test failed"; exit 1; }
+          # This should NOT fail with "unbound variable" error - call load_config
+          bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-unbound.tar.gz" "" "--force"' || { echo "Unbound variable test failed"; exit 1; }
           
           echo "✅ Unbound variable test passed"
 
