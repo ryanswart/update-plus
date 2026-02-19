@@ -152,11 +152,13 @@ restore_labeled_backup() {
   fi
 
   # Default mappings for common labels
-  [[ -z "${restore_map[config]}" ]] && restore_map["config"]="${HOME}/.openclaw"
-  [[ -z "${restore_map[workspace]}" ]] && restore_map["workspace"]="${HOME}/.openclaw/workspace"
-  [[ -z "${restore_map[prod]}" ]] && restore_map["prod"]="${HOME}/.openclaw/skills"
-  [[ -z "${restore_map[dev]}" ]] && restore_map["dev"]="${HOME}/.openclaw/skills-dev"
-  [[ -z "${restore_map[default]}" ]] && restore_map["default"]="${HOME}/.openclaw/skills"
+  [[ -v restore_map[config] ]] || restore_map["config"]="${HOME}/.openclaw"
+  [[ -v restore_map[workspace] ]] || restore_map["workspace"]="${HOME}/.openclaw/workspace"
+  [[ -v restore_map[skills] ]] || restore_map["skills"]="${HOME}/.openclaw/skills"
+  [[ -v restore_map[extensions] ]] || restore_map["extensions"]="${HOME}/.openclaw/extensions"
+  [[ -v restore_map[prod] ]] || restore_map["prod"]="${HOME}/.openclaw/skills"
+  [[ -v restore_map[dev] ]] || restore_map["dev"]="${HOME}/.openclaw/skills-dev"
+  [[ -v restore_map[default] ]] || restore_map["default"]="${HOME}/.openclaw/skills"
 
   # Show restore plan
   echo ""
