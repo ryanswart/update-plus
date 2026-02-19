@@ -7,6 +7,172 @@ on:
     branches: [main, master]
 
 jobs:
+  test-path-replacement:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test_scenario:
+          - root_to_runner
+          - home_exedev_to_runner
+          - multiple_paths
+          - yaml_files
+          - shell_scripts
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup test environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq rsync
+          mkdir -p ~/.openclaw/backups
+
+      - name: Test ${{ matrix.test_scenario }}
+        run: |
+          export HOME="$HOME"
+          export BACKUP_DIR="$HOME/.openclaw/backups"
+          mkdir -p "$BACKUP_DIR"
+          
+          case "${{ matrix.test_scenario }}" in
+            root_to_runner)
+              echo "=== Testing /root to \$HOME replacement ==="
+              TMP_DIR=$(mktemp -d)
+              mkdir -p "$TMP_DIR/config"
+              echo '{"workspace": "/root/.openclaw/workspace", "config": "/root/.openclaw/config"}' > "$TMP_DIR/config/openclaw.json"
+              tar -czf "$BACKUP_DIR/test-root.tar.gz" -C "$TMP_DIR" config
+              rm -rf "$TMP_DIR"
+              
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-root.tar.gz" "" "--force"'
+              
+              if grep -q "/root/" "$HOME/.openclaw/openclaw.json"; then
+                echo "❌ /root paths not replaced"
+                cat "$HOME/.openclaw/openclaw.json"
+                exit 1
+              fi
+              if ! grep -q "$HOME/.openclaw/workspace" "$HOME/.openclaw/openclaw.json"; then
+                echo "❌ HOME path not found"
+                cat "$HOME/.openclaw/openclaw.json"
+                exit 1
+              fi
+              echo "✅ /root to \$HOME replacement test passed"
+              ;;
+              
+            home_exedev_to_runner)
+              echo "=== Testing /home/exedev to \$HOME replacement ==="
+              TMP_DIR=$(mktemp -d)
+              mkdir -p "$TMP_DIR/config" "$TMP_DIR/workspace"
+              echo '{"path": "/home/exedev/.openclaw/test"}' > "$TMP_DIR/config/paths.json"
+              echo '/home/exedev/.openclaw/workspace' > "$TMP_DIR/workspace/location.txt"
+              tar -czf "$BACKUP_DIR/test-exedev.tar.gz" -C "$TMP_DIR" config workspace
+              rm -rf "$TMP_DIR"
+              
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-exedev.tar.gz" "" "--force"'
+              
+              if grep -q "/home/exedev" "$HOME/.openclaw/paths.json"; then
+                echo "❌ /home/exedev paths not replaced in JSON"
+                cat "$HOME/.openclaw/paths.json"
+                exit 1
+              fi
+              if grep -q "/home/exedev" "$HOME/.openclaw/workspace/location.txt"; then
+                echo "❌ /home/exedev paths not replaced in text file"
+                cat "$HOME/.openclaw/workspace/location.txt"
+                exit 1
+              fi
+              echo "✅ /home/exedev to \$HOME replacement test passed"
+              ;;
+              
+            multiple_paths)
+              echo "=== Testing multiple different home paths ==="
+              TMP_DIR=$(mktemp -d)
+              mkdir -p "$TMP_DIR/config"
+              # Simulate backup with multiple different home directories
+              cat > "$TMP_DIR/config/multi.json" << 'EOF'
+          {
+            "users": [
+              {"home": "/home/user1/.openclaw", "name": "user1"},
+              {"home": "/home/user2/.openclaw", "name": "user2"},
+              {"home": "/root/.openclaw", "name": "root"}
+            ]
+          }
+          EOF
+              tar -czf "$BACKUP_DIR/test-multi.tar.gz" -C "$TMP_DIR" config
+              rm -rf "$TMP_DIR"
+              
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-multi.tar.gz" "" "--force"'
+              
+              # Check that all old paths are gone
+              if grep -E "/home/user[12]/|/root/" "$HOME/.openclaw/multi.json" > /dev/null 2>&1; then
+                echo "❌ Some old paths remain"
+                cat "$HOME/.openclaw/multi.json"
+                exit 1
+              fi
+              # Check that new paths are present
+              if ! grep -q "$HOME/.openclaw" "$HOME/.openclaw/multi.json"; then
+                echo "❌ New HOME paths not found"
+                cat "$HOME/.openclaw/multi.json"
+                exit 1
+              fi
+              echo "✅ Multiple paths replacement test passed"
+              ;;
+              
+            yaml_files)
+              echo "=== Testing YAML file path replacement ==="
+              TMP_DIR=$(mktemp -d)
+              mkdir -p "$TMP_DIR/config"
+              cat > "$TMP_DIR/config/settings.yaml" << 'EOF'
+          workspace: /root/.openclaw/workspace
+          config_dir: /root/.openclaw/config
+          log_path: /root/.openclaw/logs
+          EOF
+              tar -czf "$BACKUP_DIR/test-yaml.tar.gz" -C "$TMP_DIR" config
+              rm -rf "$TMP_DIR"
+              
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-yaml.tar.gz" "" "--force"'
+              
+              if grep -q "/root/" "$HOME/.openclaw/settings.yaml"; then
+                echo "❌ /root paths not replaced in YAML"
+                cat "$HOME/.openclaw/settings.yaml"
+                exit 1
+              fi
+              if ! grep -q "$HOME/.openclaw/workspace" "$HOME/.openclaw/settings.yaml"; then
+                echo "❌ HOME path not found in YAML"
+                cat "$HOME/.openclaw/settings.yaml"
+                exit 1
+              fi
+              echo "✅ YAML file path replacement test passed"
+              ;;
+              
+            shell_scripts)
+              echo "=== Testing shell script path replacement ==="
+              TMP_DIR=$(mktemp -d)
+              mkdir -p "$TMP_DIR/scripts"
+              cat > "$TMP_DIR/scripts/setup.sh" << 'EOF'
+          #!/bin/bash
+          WORKSPACE="/home/developer/.openclaw/workspace"
+          CONFIG="/home/developer/.openclaw/config"
+          echo "Setting up in $WORKSPACE"
+          EOF
+              chmod +x "$TMP_DIR/scripts/setup.sh"
+              tar -czf "$BACKUP_DIR/test-script.tar.gz" -C "$TMP_DIR" scripts
+              rm -rf "$TMP_DIR"
+              
+              bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-script.tar.gz" "" "--force"'
+              
+              if grep -q "/home/developer/" "$HOME/.openclaw/scripts/setup.sh"; then
+                echo "❌ /home/developer paths not replaced in script"
+                cat "$HOME/.openclaw/scripts/setup.sh"
+                exit 1
+              fi
+              if ! grep -q "$HOME/.openclaw/workspace" "$HOME/.openclaw/scripts/setup.sh"; then
+                echo "❌ HOME path not found in script"
+                cat "$HOME/.openclaw/scripts/setup.sh"
+                exit 1
+              fi
+              echo "✅ Shell script path replacement test passed"
+              ;;
+          esac
+
   test-restore:
     runs-on: ubuntu-latest
     strategy:
