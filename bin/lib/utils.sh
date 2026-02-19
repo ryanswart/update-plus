@@ -34,7 +34,15 @@ log_error() {
 
 log_to_file() {
   local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  echo "[$timestamp] $1" >> "$LOG_FILE" 2>/dev/null || true
+  # Ensure log directory exists before writing
+  if [[ -n "$LOG_FILE" ]]; then
+    local log_dir
+    log_dir=$(dirname "$LOG_FILE")
+    if [[ ! -d "$log_dir" ]]; then
+      mkdir -p "$log_dir" 2>/dev/null || true
+    fi
+    echo "[$timestamp] $1" >> "$LOG_FILE" 2>/dev/null || true
+  fi
 }
 
 log_dry_run() {

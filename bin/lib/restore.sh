@@ -207,7 +207,7 @@ restore_labeled_backup() {
     if rsync -a --delete "$tmp_dir/$label/" "$target/" 2>/dev/null; then
       log_success "Restored $label"
       
-      # Fix hardcoded paths in JSON files (e.g., /root/.openclaw -> /home/runner)
+      # Fix hardcoded paths in all config files (e.g., /root/.openclaw -> /home/runner)
       if command -v find >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
         local original_home=""
         # Try to detect original home from common patterns in the backup
@@ -219,8 +219,24 @@ restore_labeled_backup() {
         
         if [[ -n "$original_home" ]] && [[ "$original_home" != "$HOME" ]]; then
           log_info "Fixing hardcoded paths: $original_home → $HOME"
-          find "$target" -type f -name "*.json" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
-          find "$target" -type f -name "*.jsonl" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          # Fix JSON files
+          find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          # Fix YAML files
+          find "$target" -type f \( -name "*.yaml" -o -name "*.yml" \) -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          # Fix shell scripts that might contain paths
+          find "$target" -type f -name "*.sh" -exec sed -i "s|$original_home|$HOME|g" {} \; 2>/dev/null || true
+          # Fix any other text files (be more careful here)
+          find "$target" -type f ! -name "*.tar.gz" ! -name "*.gpg" ! -name "*.png" ! -name "*.jpg" ! -name "*.gif" ! -name "*.ico" ! -name "*.woff" ! -name "*.woff2" ! -name "*.ttf" ! -name "*.eot" -exec grep -l "$original_home" {} \; 2>/dev/null | while read -r file; do
+            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null || true
+          done
+          
+          # Validate: check if any hardcoded paths remain
+          local remaining_paths
+          remaining_paths=$(grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | head -5 || true)
+          if [[ -n "$remaining_paths" ]]; then
+            log_warning "Some hardcoded paths may remain in the restored files:"
+            echo "$remaining_paths" | head -3 >&2
+          fi
         fi
       fi
       
