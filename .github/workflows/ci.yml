@@ -146,27 +146,27 @@ jobs:
             shell_scripts)
               echo "=== Testing shell script path replacement ==="
               TMP_DIR=$(mktemp -d)
-              mkdir -p "$TMP_DIR/scripts"
-              cat > "$TMP_DIR/scripts/setup.sh" << 'EOF'
+              mkdir -p "$TMP_DIR/skills"
+              cat > "$TMP_DIR/skills/setup.sh" << 'EOF'
           #!/bin/bash
           WORKSPACE="/home/developer/.openclaw/workspace"
           CONFIG="/home/developer/.openclaw/config"
           echo "Setting up in $WORKSPACE"
           EOF
-              chmod +x "$TMP_DIR/scripts/setup.sh"
-              tar -czf "$BACKUP_DIR/test-script.tar.gz" -C "$TMP_DIR" scripts
+              chmod +x "$TMP_DIR/skills/setup.sh"
+              tar -czf "$BACKUP_DIR/test-script.tar.gz" -C "$TMP_DIR" skills
               rm -rf "$TMP_DIR"
               
               bash -c 'source bin/lib/utils.sh; source bin/lib/config.sh; source bin/lib/restore.sh; load_config; set -euo pipefail; restore_backup "test-script.tar.gz" "" "--force"'
               
-              if grep -q "/home/developer/" "$HOME/.openclaw/scripts/setup.sh"; then
+              if grep -q "/home/developer/" "$HOME/.openclaw/skills/setup.sh"; then
                 echo "❌ /home/developer paths not replaced in script"
-                cat "$HOME/.openclaw/scripts/setup.sh"
+                cat "$HOME/.openclaw/skills/setup.sh"
                 exit 1
               fi
-              if ! grep -q "$HOME/.openclaw/workspace" "$HOME/.openclaw/scripts/setup.sh"; then
+              if ! grep -q "$HOME/.openclaw/workspace" "$HOME/.openclaw/skills/setup.sh"; then
                 echo "❌ HOME path not found in script"
-                cat "$HOME/.openclaw/scripts/setup.sh"
+                cat "$HOME/.openclaw/skills/setup.sh"
                 exit 1
               fi
               echo "✅ Shell script path replacement test passed"
