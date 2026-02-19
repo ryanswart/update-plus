@@ -397,8 +397,12 @@ sanitize_backup_paths() {
   # Final validation - check if any hardcoded paths remain
   local remaining=0
   for path in "${unique_paths[@]}"; do
-    local count
-    count=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | wc -l | tr -d ' ' || echo "0")
+    local count=0
+    local grep_output
+    grep_output=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" || true)
+    if [[ -n "$grep_output" ]]; then
+      count=$(echo "$grep_output" | wc -l | tr -d ' ')
+    fi
     remaining=$((remaining + count))
   done
   
