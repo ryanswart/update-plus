@@ -214,23 +214,34 @@ restore_labeled_backup() {
       if command -v find >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
         local original_home=""
         # Try to detect original home from common patterns in the backup
-        # Check for /root first (common in Docker containers)
-        if grep -rI "/root/" "$target/" 2>/dev/null | grep -v ".git/" | head -1 >/dev/null; then
+        # Check for /root first (common in Docker containers) - use -q to avoid broken pipe
+        if grep -rIq "/root/" "$target/" 2>/dev/null; then
           original_home="/root"
           log_info "Detected original home: /root"
         fi
         
         # Check for any /home/*/ paths (various usernames)
-        local detected_home
-        detected_home=$(grep -rohI "/home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        # Use temp file to avoid broken pipe from sort | uniq | head pipeline
+        local detected_home=""
+        local detect_temp
+        detect_temp=$(mktemp)
+        if grep -rohI "/home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" > "$detect_temp" 2>/dev/null; then
+          detected_home=$(sort < "$detect_temp" | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        fi
+        rm -f "$detect_temp"
+        
         if [[ -n "$detected_home" ]]; then
           original_home="$detected_home"
           log_info "Detected original home from backup: $original_home"
         fi
         
         # Also check for home references without leading slash (e.g., home/exedev/)
-        local detected_home_rel
-        detected_home_rel=$(grep -rohI "home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        local detected_home_rel=""
+        detect_temp=$(mktemp)
+        if grep -rohI "home/[^/]*/" "$target/" 2>/dev/null | grep -v ".git/" > "$detect_temp" 2>/dev/null; then
+          detected_home_rel=$(sort < "$detect_temp" | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
+        fi
+        rm -f "$detect_temp"
         if [[ -n "$detected_home_rel" ]]; then
           # Only use if we didn't already find an absolute path
           if [[ -z "$original_home" ]]; then
@@ -324,13 +335,21 @@ sanitize_backup_paths() {
   local detected_paths=()
   
   # Check for /root (common in Docker containers)
-  if grep -rI "/root/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | head -1 >/dev/null; then
+  # Use grep -q to avoid broken pipe errors from head
+  if grep -rIq "/root/" "$tmp_dir/" 2>/dev/null; then
     detected_paths+=("/root")
+    log_info "Detected /root paths in backup"
   fi
   
   # Check for /home/* patterns - get all unique home directories
-  local home_paths
-  home_paths=$(grep -rohI "/home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | sed 's|/$||' | sort -u || true)
+  # Use a temp file to avoid broken pipe issues
+  local home_paths=""
+  local grep_temp
+  grep_temp=$(mktemp)
+  if grep -rohI "/home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" > "$grep_temp" 2>/dev/null; then
+    home_paths=$(sort -u < "$grep_temp" | sed 's|/$||' || true)
+  fi
+  rm -f "$grep_temp"
   if [[ -n "$home_paths" ]]; then
     while IFS= read -r path; do
       [[ -n "$path" ]] && detected_paths+=("$path")
@@ -338,8 +357,12 @@ sanitize_backup_paths() {
   fi
   
   # Also check for patterns like "home/username" without leading slash
-  local rel_paths
-  rel_paths=$(grep -rohI "home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" | sed 's|/$||' | sort -u || true)
+  local rel_paths=""
+  grep_temp=$(mktemp)
+  if grep -rohI "home/[^/]*/" "$tmp_dir/" 2>/dev/null | grep -v ".git/" > "$grep_temp" 2>/dev/null; then
+    rel_paths=$(sort -u < "$grep_temp" | sed 's|/$||' || true)
+  fi
+  rm -f "$grep_temp"
   if [[ -n "$rel_paths" ]]; then
     while IFS= read -r path; do
       [[ -n "$path" ]] && detected_paths+=("/$path")
