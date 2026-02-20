@@ -256,10 +256,21 @@ restore_labeled_backup() {
           # Create a temp file for tracking what was changed
           local changes_made=0
           
-          # Fix JSON files (most common for OpenClaw config)
+          # Fix JSON files (most common for OpenClaw config) - use jq if available
           while IFS= read -r -d '' file; do
             if grep -q "$original_home" "$file" 2>/dev/null; then
-              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+              if command -v jq >/dev/null 2>&1; then
+                local temp_json
+                temp_json=$(mktemp)
+                if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
+                  mv "$temp_json" "$file" && changes_made=$((changes_made + 1))
+                else
+                  rm -f "$temp_json"
+                  sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+                fi
+              else
+                sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+              fi
             fi
           done < <(find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -print0 2>/dev/null)
           
@@ -403,12 +414,38 @@ sanitize_backup_paths() {
           ;;
       esac
       
-      # Check if file is text and contains the path
+      # Check if file contains the path
       if grep -q "$original_home" "$file" 2>/dev/null; then
-        # Verify it's a text file
-        if file "$file" 2>/dev/null | grep -qiE "text|ascii|json|yaml|xml|script|source"; then
-          if sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null; then
+        # Handle JSON files specially with jq if available
+        if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
+          # Use jq to replace paths in JSON, handling both regular and escaped paths
+          local temp_json
+          temp_json=$(mktemp)
+          if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
+            mv "$temp_json" "$file"
             total_changes=$((total_changes + 1))
+          else
+            rm -f "$temp_json"
+            # Fall back to sed if jq fails
+            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+          fi
+        # Handle JSONL files
+        elif [[ "$file" == *.jsonl ]] && command -v jq >/dev/null 2>&1; then
+          local temp_jsonl
+          temp_jsonl=$(mktemp)
+          if jq --arg old "$original_home" --arg new "$HOME" -R 'fromjson? | walk(if type == "string" then gsub($old; $new) else . end) | tostring' "$file" 2>/dev/null | sed 's/^"//;s/"$//' > "$temp_jsonl" 2>/dev/null; then
+            mv "$temp_jsonl" "$file"
+            total_changes=$((total_changes + 1))
+          else
+            rm -f "$temp_jsonl"
+            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+          fi
+        else
+          # For all other text files, use sed
+          if file "$file" 2>/dev/null | grep -qiE "text|ascii|yaml|xml|script|source"; then
+            if sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null; then
+              total_changes=$((total_changes + 1))
+            fi
           fi
         fi
       fi
