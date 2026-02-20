@@ -483,8 +483,15 @@ sanitize_backup_paths() {
   local remaining=0
   if command -v rg >/dev/null 2>&1; then
     for path in "${unique_paths[@]}"; do
-      local count
-      count=$(rg -c "$path" "$tmp_dir" 2>/dev/null | awk -F: '{sum+=$2} END {print sum+0}' || echo "0")
+      local count=0
+      # rg -c outputs "file:count" lines; sum the counts
+      local rg_output
+      rg_output=$(rg -c "$path" "$tmp_dir" 2>/dev/null || true)
+      if [[ -n "$rg_output" ]]; then
+        count=$(echo "$rg_output" | awk -F: '{sum+=$2} END {print sum}')
+      fi
+      # Ensure count is a valid number
+      [[ -z "$count" ]] && count=0
       remaining=$((remaining + count))
     done
   else
