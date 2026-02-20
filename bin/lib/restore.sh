@@ -209,7 +209,7 @@ restore_labeled_backup() {
     # Restore with rsync
     if rsync -a --delete "$tmp_dir/$label/" "$target/" 2>/dev/null; then
       log_success "Restored $label"
-      
+
       # Fix hardcoded paths in all config files (e.g., /root/.openclaw -> /home/runner)
       if command -v find >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
         local original_home=""
@@ -219,7 +219,7 @@ restore_labeled_backup() {
           original_home="/root"
           log_info "Detected original home: /root"
         fi
-        
+
         # Check for any /home/*/ paths (various usernames)
         # Use temp file to avoid broken pipe from sort | uniq | head pipeline
         local detected_home=""
@@ -229,12 +229,12 @@ restore_labeled_backup() {
           detected_home=$(sort < "$detect_temp" | uniq -c | sort -rn | head -1 | awk '{print $2}' | sed 's|/$||' || true)
         fi
         rm -f "$detect_temp"
-        
+
         if [[ -n "$detected_home" ]]; then
           original_home="$detected_home"
           log_info "Detected original home from backup: $original_home"
         fi
-        
+
         # Also check for home references without leading slash (e.g., home/exedev/)
         local detected_home_rel=""
         detect_temp=$(mktemp)
@@ -249,13 +249,13 @@ restore_labeled_backup() {
             log_info "Detected relative home path from backup: $original_home"
           fi
         fi
-        
+
         if [[ -n "$original_home" ]] && [[ "$original_home" != "$HOME" ]]; then
           log_info "Fixing hardcoded paths: $original_home → $HOME"
-          
+
           # Create a temp file for tracking what was changed
           local changes_made=0
-          
+
           # Fix JSON files (most common for OpenClaw config) - use jq if available
           while IFS= read -r -d '' file; do
             if grep -q "$original_home" "$file" 2>/dev/null; then
@@ -273,21 +273,21 @@ restore_labeled_backup() {
               fi
             fi
           done < <(find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -print0 2>/dev/null)
-          
+
           # Fix YAML files
           while IFS= read -r -d '' file; do
             if grep -q "$original_home" "$file" 2>/dev/null; then
               sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
             fi
           done < <(find "$target" -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 2>/dev/null)
-          
+
           # Fix shell scripts
           while IFS= read -r -d '' file; do
             if grep -q "$original_home" "$file" 2>/dev/null; then
               sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
             fi
           done < <(find "$target" -type f -name "*.sh" -print0 2>/dev/null)
-          
+
           # Fix all other text files (more aggressive approach)
           # Use grep -l to find files with the path, then sed to replace
           # Skip binary files by extension
@@ -298,9 +298,9 @@ restore_labeled_backup() {
               [[ -f "$file" ]] && sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
             done <<< "$other_files"
           fi
-          
+
           log_info "Path replacement complete. Modified $changes_made files."
-          
+
           # Validate: check if any hardcoded paths remain
           local remaining_count
           remaining_count=$(grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | wc -l || echo "0")
@@ -313,7 +313,7 @@ restore_labeled_backup() {
           fi
         fi
       fi
-      
+
       restored_count=$((restored_count + 1))
     else
       log_error "Failed to restore $label"
@@ -332,20 +332,20 @@ restore_labeled_backup() {
 # This runs on the temp directory before any files are moved to their final locations
 sanitize_backup_paths() {
   local tmp_dir="$1"
-  
+
   log_info "Sanitizing backup paths..."
-  
+
   # Detect common home directory patterns in the backup
   local original_home=""
   local detected_paths=()
-  
+
   # Check for /root (common in Docker containers)
   # Use grep -q to avoid broken pipe errors from head
   if grep -rIq "/root/" "$tmp_dir/" 2>/dev/null; then
     detected_paths+=("/root")
     log_info "Detected /root paths in backup"
   fi
-  
+
   # Check for /home/* patterns - get all unique home directories
   # Use a temp file to avoid broken pipe issues
   local home_paths=""
@@ -360,7 +360,7 @@ sanitize_backup_paths() {
       [[ -n "$path" ]] && detected_paths+=("$path")
     done <<< "$home_paths"
   fi
-  
+
   # Also check for patterns like "home/username" without leading slash
   local rel_paths=""
   grep_temp=$(mktemp)
@@ -373,7 +373,7 @@ sanitize_backup_paths() {
       [[ -n "$path" ]] && detected_paths+=("/$path")
     done <<< "$rel_paths"
   fi
-  
+
   # Remove duplicates and current HOME from the list
   local unique_paths=()
   for path in "${detected_paths[@]}"; do
@@ -386,83 +386,119 @@ sanitize_backup_paths() {
     done
     [[ $found -eq 0 ]] && unique_paths+=("$path")
   done
-  
+
   if [[ ${#unique_paths[@]} -eq 0 ]]; then
     log_info "No hardcoded home paths detected in backup"
     return 0
   fi
-  
+
   log_info "Detected ${#unique_paths[@]} hardcoded home path(s) to sanitize: ${unique_paths[*]}"
-  
+
   # Replace all detected paths with current HOME
   local total_changes=0
-  for original_home in "${unique_paths[@]}"; do
-    log_info "Replacing: $original_home → $HOME"
-    
-    # Use find with -print0 for safety with special characters
+
+  # Fast path: use rg + sd if available (much faster than find+grep+sed)
+  if command -v rg >/dev/null 2>&1 && command -v sd >/dev/null 2>&1; then
+    log_info "Using rg + sd for fast path replacement"
+    # Find files with home directory patterns and replace in one pass
     while IFS= read -r -d '' file; do
-      # Skip binary files by checking mime type or extension
-      case "$file" in
-        *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
-          continue
-          ;;
-      esac
-      
-      # Check if file contains the path
-      if grep -q "$original_home" "$file" 2>/dev/null; then
-        # Handle JSON files specially with jq if available
-        if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
-          # Use jq to replace paths in JSON, handling both regular and escaped paths
-          local temp_json
-          temp_json=$(mktemp)
+      [[ -f "$file" ]] || continue
+
+      # Handle JSON files with jq for proper structure handling
+      if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
+        local temp_json
+        temp_json=$(mktemp)
+        # Replace each detected path
+        local replaced=0
+        for original_home in "${unique_paths[@]}"; do
           if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
             mv "$temp_json" "$file"
-            total_changes=$((total_changes + 1))
-          else
-            rm -f "$temp_json"
-            # Fall back to sed if jq fails
-            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+            replaced=1
           fi
-        # Handle JSONL files
-        elif [[ "$file" == *.jsonl ]] && command -v jq >/dev/null 2>&1; then
-          local temp_jsonl
-          temp_jsonl=$(mktemp)
-          if jq --arg old "$original_home" --arg new "$HOME" -R 'fromjson? | walk(if type == "string" then gsub($old; $new) else . end) | tostring' "$file" 2>/dev/null | sed 's/^"//;s/"$//' > "$temp_jsonl" 2>/dev/null; then
-            mv "$temp_jsonl" "$file"
-            total_changes=$((total_changes + 1))
-          else
-            rm -f "$temp_jsonl"
-            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+        done
+        [[ $replaced -eq 1 ]] && total_changes=$((total_changes + 1))
+        rm -f "$temp_json"
+      else
+        # Use sd for fast replacement on all other files
+        local changed=0
+        for original_home in "${unique_paths[@]}"; do
+          if sd "$original_home" "$HOME" "$file" 2>/dev/null; then
+            changed=1
           fi
-        else
-          # For all other text files, use sed
-          # Skip binary files by extension, no need for slow 'file' command
-          case "$file" in
-            *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
-              ;;
-            *)
-              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
-              ;;
-          esac
-        fi
+        done
+        [[ $changed -eq 1 ]] && total_changes=$((total_changes + 1))
       fi
-    done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
-  done
-  
+    done < <(rg -0 -l '/(home|Users|var/home)/[^/ ]+|/root' "$tmp_dir" 2>/dev/null || true)
+  else
+    # Fallback: use find + grep + sed
+    log_info "rg/sd not available, using find + sed (slower)"
+    for original_home in "${unique_paths[@]}"; do
+      log_info "Replacing: $original_home → $HOME"
+
+      while IFS= read -r -d '' file; do
+        case "$file" in
+          *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
+            continue
+            ;;
+        esac
+
+        if grep -q "$original_home" "$file" 2>/dev/null; then
+          if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
+            local temp_json
+            temp_json=$(mktemp)
+            if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
+              mv "$temp_json" "$file"
+              total_changes=$((total_changes + 1))
+            else
+              rm -f "$temp_json"
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+            fi
+          elif [[ "$file" == *.jsonl ]] && command -v jq >/dev/null 2>&1; then
+            local temp_jsonl
+            temp_jsonl=$(mktemp)
+            if jq --arg old "$original_home" --arg new "$HOME" -R 'fromjson? | walk(if type == "string" then gsub($old; $new) else . end) | tostring' "$file" 2>/dev/null | sed 's/^"//;s/"$//' > "$temp_jsonl" 2>/dev/null; then
+              mv "$temp_jsonl" "$file"
+              total_changes=$((total_changes + 1))
+            else
+              rm -f "$temp_jsonl"
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+            fi
+          else
+            case "$file" in
+              *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
+                ;;
+              *)
+                sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+                ;;
+            esac
+          fi
+        fi
+      done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
+    done
+  fi
+
   log_info "Sanitized $total_changes files"
-  
-  # Final validation - check if any hardcoded paths remain
+
+  # Final validation - check if any hardcoded paths remain using rg if available
   local remaining=0
-  for path in "${unique_paths[@]}"; do
-    local count=0
-    local grep_output
-    grep_output=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" || true)
-    if [[ -n "$grep_output" ]]; then
-      count=$(echo "$grep_output" | wc -l | tr -d ' ')
-    fi
-    remaining=$((remaining + count))
-  done
-  
+  if command -v rg >/dev/null 2>&1; then
+    for path in "${unique_paths[@]}"; do
+      local count
+      count=$(rg -c "$path" "$tmp_dir" 2>/dev/null | awk -F: '{sum+=$2} END {print sum+0}' || echo "0")
+      remaining=$((remaining + count))
+    done
+  else
+    for path in "${unique_paths[@]}"; do
+      local count=0
+      local grep_output
+      grep_output=$(grep -r "$path" "$tmp_dir/" 2>/dev/null | grep -v ".git/" || true)
+      if [[ -n "$grep_output" ]]; then
+        count=$(echo "$grep_output" | wc -l | tr -d ' ')
+      fi
+      remaining=$((remaining + count))
+    done
+  fi
+
   if [[ $remaining -gt 0 ]]; then
     log_warning "$remaining hardcoded path references may still remain"
   else

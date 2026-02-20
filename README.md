@@ -57,6 +57,8 @@ ln -sf ~/.openclaw/skills/update-plus/bin/update-plus ~/bin/update-plus
 | `git` | Yes | Update skills from repositories |
 | `jq` | Yes | Parse JSON configuration |
 | `rsync` | Yes | Efficient file copying |
+| `rg` (ripgrep) | No | Fast path detection in backups |
+| `sd` | No | Fast path replacement in backups |
 | `rclone` | No | Cloud storage sync |
 | `gpg` | No | Backup encryption |
 
