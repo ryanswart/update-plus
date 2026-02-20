@@ -256,50 +256,54 @@ restore_labeled_backup() {
           # Create a temp file for tracking what was changed
           local changes_made=0
           
-          # Use ripgrep to find files with the path (much faster than find+grep)
-          local files_with_path
-          files_with_path=$(rg -l --type-add 'backup:*.{tar.gz,tgz,gz,zip,rar,7z,gpg,png,jpg,jpeg,gif,bmp,ico,webp,woff,woff2,ttf,otf,eot,mp3,mp4,avi,mov,webm,pdf,exe,dll,so,dylib}' -Tbackup "$original_home" "$target" 2>/dev/null || true)
-          
-          if [[ -n "$files_with_path" ]]; then
-            # Process each file
-            while IFS= read -r file; do
-              [[ -z "$file" ]] && continue
-              [[ -d "$file" ]] && continue
-              
-              # Handle JSON files with jq for proper structure handling
-              if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
+          # Fix JSON files (most common for OpenClaw config) - use jq if available
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              if command -v jq >/dev/null 2>&1; then
                 local temp_json
                 temp_json=$(mktemp)
                 if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
                   mv "$temp_json" "$file" && changes_made=$((changes_made + 1))
                 else
                   rm -f "$temp_json"
-                  perl -i -pe "s|\Q$original_home\E|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+                  sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
                 fi
               else
-                # Use perl for fast in-place replacement
-                if perl -i -pe "s|\Q$original_home\E|$HOME|g" "$file" 2>/dev/null; then
-                  changes_made=$((changes_made + 1))
-                fi
+                sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
               fi
-            done <<< "$files_with_path"
+            fi
+          done < <(find "$target" -type f \( -name "*.json" -o -name "*.jsonl" \) -print0 2>/dev/null)
+          
+          # Fix YAML files
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            fi
+          done < <(find "$target" -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 2>/dev/null)
+          
+          # Fix shell scripts
+          while IFS= read -r -d '' file; do
+            if grep -q "$original_home" "$file" 2>/dev/null; then
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            fi
+          done < <(find "$target" -type f -name "*.sh" -print0 2>/dev/null)
+          
+          # Fix all other text files (more aggressive approach)
+          # Use grep -l to find files with the path, then sed to replace
+          # Skip binary files by extension
+          local other_files
+          other_files=$(find "$target" -type f ! -name "*.tar.gz" ! -name "*.gpg" ! -name "*.png" ! -name "*.jpg" ! -name "*.jpeg" ! -name "*.gif" ! -name "*.ico" ! -name "*.woff" ! -name "*.woff2" ! -name "*.ttf" ! -name "*.eot" ! -name "*.mp3" ! -name "*.mp4" ! -name "*.zip" -print0 2>/dev/null | xargs -0 grep -l "$original_home" 2>/dev/null || true)
+          if [[ -n "$other_files" ]]; then
+            while IFS= read -r file; do
+              [[ -f "$file" ]] && sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && changes_made=$((changes_made + 1))
+            done <<< "$other_files"
           fi
           
           log_info "Path replacement complete. Modified $changes_made files."
           
-          # Validate: check if any hardcoded paths remain using ripgrep
+          # Validate: check if any hardcoded paths remain
           local remaining_count
-          remaining_count=$(rg -c "$original_home" "$target" 2>/dev/null | awk -F: '{sum+=$2} END {print sum+0}' || echo "0")
-          
-          if [[ "$remaining_count" -gt 0 ]]; then
-            log_warning "$remaining_count occurrences of $original_home may still remain in restored files"
-            # Show sample of remaining paths (first 3)
-            rg "$original_home" "$target" 2>/dev/null | head -3 && true
-          else
-            log_success "All hardcoded paths successfully replaced"
-          fi
-        fi
-      fi
+          remaining_count=$(grep -r "$original_home" "$target/" 2>/dev/null | grep -v ".git/" | wc -l || echo "0")
           if [[ "$remaining_count" -gt 0 ]]; then
             log_warning "$remaining_count occurrences of $original_home may still remain in restored files"
             # Show sample of remaining paths (first 3)
@@ -390,45 +394,59 @@ sanitize_backup_paths() {
   
   log_info "Detected ${#unique_paths[@]} hardcoded home path(s) to sanitize: ${unique_paths[*]}"
   
-  # Replace all detected paths with current HOME using fast tools
+  # Replace all detected paths with current HOME
   local total_changes=0
   for original_home in "${unique_paths[@]}"; do
     log_info "Replacing: $original_home → $HOME"
     
-    # Use ripgrep to find files with the path (much faster than find+grep)
-    # Then use perl for in-place replacement (faster than sed, handles binary check)
-    local files_with_path
-    files_with_path=$(rg -l --type-add 'backup:*.{tar.gz,tgz,gz,zip,rar,7z,gpg,png,jpg,jpeg,gif,bmp,ico,webp,woff,woff2,ttf,otf,eot,mp3,mp4,avi,mov,webm,pdf,exe,dll,so,dylib}' -Tbackup "$original_home" "$tmp_dir" 2>/dev/null || true)
-    
-    if [[ -z "$files_with_path" ]]; then
-      continue
-    fi
-    
-    # Process each file
-    while IFS= read -r file; do
-      [[ -z "$file" ]] && continue
-      [[ -d "$file" ]] && continue
+    # Use find with -print0 for safety with special characters
+    while IFS= read -r -d '' file; do
+      # Skip binary files by checking mime type or extension
+      case "$file" in
+        *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
+          continue
+          ;;
+      esac
       
-      # Handle JSON files with jq for proper structure handling
-      if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
-        local temp_json
-        temp_json=$(mktemp)
-        if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
-          mv "$temp_json" "$file"
-          total_changes=$((total_changes + 1))
+      # Check if file contains the path
+      if grep -q "$original_home" "$file" 2>/dev/null; then
+        # Handle JSON files specially with jq if available
+        if [[ "$file" == *.json ]] && command -v jq >/dev/null 2>&1; then
+          # Use jq to replace paths in JSON, handling both regular and escaped paths
+          local temp_json
+          temp_json=$(mktemp)
+          if jq --arg old "$original_home" --arg new "$HOME" 'walk(if type == "string" then gsub($old; $new) else . end)' "$file" > "$temp_json" 2>/dev/null; then
+            mv "$temp_json" "$file"
+            total_changes=$((total_changes + 1))
+          else
+            rm -f "$temp_json"
+            # Fall back to sed if jq fails
+            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+          fi
+        # Handle JSONL files
+        elif [[ "$file" == *.jsonl ]] && command -v jq >/dev/null 2>&1; then
+          local temp_jsonl
+          temp_jsonl=$(mktemp)
+          if jq --arg old "$original_home" --arg new "$HOME" -R 'fromjson? | walk(if type == "string" then gsub($old; $new) else . end) | tostring' "$file" 2>/dev/null | sed 's/^"//;s/"$//' > "$temp_jsonl" 2>/dev/null; then
+            mv "$temp_jsonl" "$file"
+            total_changes=$((total_changes + 1))
+          else
+            rm -f "$temp_jsonl"
+            sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+          fi
         else
-          rm -f "$temp_json"
-          # Fall back to perl
-          perl -i -pe "s|\Q$original_home\E|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
-        fi
-      else
-        # Use perl for fast in-place replacement on all other files
-        # Perl handles binary files better than sed
-        if perl -i -pe "s|\Q$original_home\E|$HOME|g" "$file" 2>/dev/null; then
-          total_changes=$((total_changes + 1))
+          # For all other text files, use sed
+          # Skip binary files by extension, no need for slow 'file' command
+          case "$file" in
+            *.tar.gz|*.tgz|*.gz|*.zip|*.rar|*.7z|*.gpg|*.png|*.jpg|*.jpeg|*.gif|*.bmp|*.ico|*.webp|*.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp3|*.mp4|*.avi|*.mov|*.webm|*.pdf|*.exe|*.dll|*.so|*.dylib)
+              ;;
+            *)
+              sed -i "s|$original_home|$HOME|g" "$file" 2>/dev/null && total_changes=$((total_changes + 1))
+              ;;
+          esac
         fi
       fi
-    done <<< "$files_with_path"
+    done < <(find "$tmp_dir" -type f -print0 2>/dev/null)
   done
   
   log_info "Sanitized $total_changes files"
